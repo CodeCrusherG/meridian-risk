@@ -1,0 +1,71 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "meridian-risk"
+dynamic = ["version"]
+description = "Meridian Risk: credit, exposure and model risk analytics"
+readme = "README.rst"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Guillermo Navas-Palencia", email = "g.navas-palencia@gmail.com" },
+]
+requires-python = ">=3.12"
+dependencies = [
+    "matplotlib>=3.11,<4",
+    "numpy>=2.5,<3",
+    "ortools>=9.15,<10",
+    "pandas>=3.0,<4",
+    "ropwr>=1.2,<2",
+    "scikit-learn>=1.9,<2",
+    "scipy>=1.18,<2",
+]
+classifiers = [
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+]
+
+[project.optional-dependencies]
+dashboard = ["fastapi>=0.142,<1", "uvicorn>=0.54,<1"]
+distributed = ["pympler", "tdigest"]
+test = [
+    "coverage>=7",
+    "ruff>=0.16",
+    "pytest>=9",
+    "httpx>=0.28,<1",
+    "pyarrow",
+    "pympler",
+    "tdigest",
+]
+ecos = ["ecos"]
+
+[project.urls]
+"Upstream engine" = "https://github.com/guillermo-navas-palencia/optbinning"
+"Engine documentation" = "https://gnpalencia.org/optbinning/"
+
+[tool.setuptools.dynamic]
+version = { attr = "optbinning._version.__version__" }
+
+[tool.setuptools]
+platforms = ["any"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["optbinning*", "meridian*"]
+exclude = ["tests*"]
+
+[tool.ruff.lint]
+select = ["E9", "F63", "F7", "F82"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
