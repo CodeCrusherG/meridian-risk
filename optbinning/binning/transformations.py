@@ -1,0 +1,529 @@
+"""
+Binning transformations.
+"""
+
+# Guillermo Navas-Palencia <g.navas.palencia@gmail.com>
+# Copyright (C) 2019
+
+import numbers
+
+import numpy as np
+import numpy.typing as npt
+import pandas as pd
+
+from sklearn.utils import check_array
+
+from .binning_statistics import bin_categorical
+from .binning_statistics import bin_str_format
+
+
+def transform_event_rate_to_woe(
+    event_rate: float | npt.NDArray,
+    n_nonevent: int,
+    n_event: int
+) -> float | np.ndarray:
+    """Transform event rate to WoE.
+
+    Parameters
+    ----------
+    event_rate : float or numpy.ndarray
+        Event rate.
+
+    n_nonevent : int
+        Total number of non-events.
+
+    n_event : int
+        Total number of events.
+
+    Returns
+    -------
+    woe : numpy.ndarray or float
+        Weight of evidence.
+    """
+    # event_rate of 0 or 1 is a legitimate (pure) bin, not an error; it
+    # only yields +/-inf WoE, which is the correct value. Silence the
+    # resulting RuntimeWarning instead of the underlying computation.
+    with np.errstate(divide='ignore', invalid='ignore'):
+        return np.log((1. / event_rate - 1) * n_event / n_nonevent)
+
+
+def transform_woe_to_event_rate(
+    woe: float | npt.NDArray,
+    n_nonevent: int,
+    n_event: int
+) -> float | np.ndarray:
+    """Transform WoE to event rate.
+
+    Parameters
+    ----------
+    woe : array-like or float
+        Weight of evidence.
+
+    n_nonevent : int
+        Total number of non-events.
+
+    n_event : int
+        Total number of events.
+
+    Returns
+    -------
+    event_rate : numpy.ndarray or float
+        Event rate.
+    """
+    return 1.0 / (1.0 + n_nonevent / n_event * np.exp(woe))
+
+
+def _check_metric_special_missing(
+    metric_special: str | dict | numbers.Number,
+    metric_missing: str | numbers.Number
+) -> None:
+    if isinstance(metric_special, str):
+        if metric_special != "empirical":
+            raise ValueError('Invalid value for metric_special. Allowed '
+                             'value "empirical"; got {}.'
+                             .format(metric_special))
+
+    elif isinstance(metric_special, dict):
+        for k, v in metric_special.items():
+            if not isinstance(v, numbers.Number):
+                raise ValueError('Invalid value for metric_special key: {}.'
+                                 .format(k))
+
+    elif not isinstance(metric_special, numbers.Number):
+        raise ValueError('Invalid value for metric_special. Allowed values '
+                         'are "empirical" a numeric value or a dict; got {}.'
+                         .format(metric_special))
+
+    if isinstance(metric_missing, str):
+        if metric_missing != "empirical":
+            raise ValueError('Invalid value for metric_missing. Allowed '
+                             'value "empirical"; got {}.'
+                             .format(metric_missing))
+
+    elif not isinstance(metric_missing, numbers.Number):
+        raise ValueError('Invalid value for metric_missing. Allowed values '
+                         'are "empirical" or a numeric value; got {}.'
+                         .format(metric_missing))
+
+
+def _check_show_digits(show_digits: int) -> None:
+    if (not isinstance(show_digits, numbers.Integral) or
+            not 0 <= show_digits <= 8):
+        raise ValueError("show_digits must be an integer in [0, 8]; "
+                         "got {}.".format(show_digits))
+
+
+def _check_cat_unknown(
+    metric: str,
+    cat_unknown: str | int | numbers.Number | None
+) -> None:
+    if cat_unknown is not None:
+        if not isinstance(cat_unknown, str) and metric == "bins":
+            raise ValueError("Invalid value for cat_unknown. cat_unknown "
+                             "must be string if metric='bins'.")
+
+        if not isinstance(cat_unknown, int) and metric == "indices":
+            raise ValueError("Invalid value for cat_unknown. cat_unknown "
+                             "must be an integer if metric='indices'.")
+
+        if metric in ("woe", "event_rate", "mean"):
+            if not isinstance(cat_unknown, numbers.Number):
+                raise ValueError("Invalid value for cat_unknown. cat_unknown "
+                                 "must be numeric if metric='{}'."
+                                 .format(metric))
+
+
+def _retrieve_special_codes(special_codes: dict) -> list[int | float | str]:
+    _special_codes = []
+    for s in special_codes.values():
+        if isinstance(s, (list, np.ndarray)):
+            _special_codes.extend(s)
+        else:
+            _special_codes.append(s)
+
+    return _special_codes
+
+
+def _mask_special_missing(
+    x: npt.NDArray,
+    special_codes: dict | list | None
+) -> tuple[np.ndarray | None, np.ndarray, np.ndarray, int]:
+    if np.issubdtype(x.dtype, np.number):
+        missing_mask = np.isnan(x)
+    else:
+        missing_mask = pd.isnull(x)
+
+    if special_codes is None:
+        special_mask = None
+        n_special = 1
+        clean_mask = ~missing_mask
+    else:
+        if isinstance(special_codes, dict):
+            n_special = len(special_codes)
+            _special_codes = _retrieve_special_codes(special_codes)
+        else:
+            n_special = 1
+            _special_codes = special_codes
+
+        special_mask = pd.Series(x).isin(_special_codes).values
+        clean_mask = ~missing_mask & ~special_mask
+
+    return special_mask, missing_mask, clean_mask, n_special
+
+
+def _transform_metric_indices_bins(
+    x: npt.NDArray,
+    special_codes: dict | list | None,
+    metric: str,
+    n_bins: int,
+    n_special: int,
+    bins_str: list,
+    cat_unknown: str | int | numbers.Number | None
+) -> tuple[np.ndarray | list, np.ndarray]:
+
+    if cat_unknown is None:
+        if metric == 'indices':
+            cat_unknown = -1
+        else:
+            cat_unknown = 'unknown'
+
+    if metric == "indices":
+        metric_value = np.arange(n_bins + n_special + 1)
+        x_transform = np.full(x.shape, cat_unknown, dtype=int)
+    elif metric == "bins":
+        if isinstance(special_codes, dict):
+            bins_str.extend(list(special_codes) + ["Missing"])
+        else:
+            bins_str.extend(["Special", "Missing"])
+
+        metric_value = bins_str
+        x_transform = np.full(x.shape, cat_unknown, dtype=object)
+
+    return metric_value, x_transform
+
+
+def _apply_transform(
+    x: npt.NDArray,
+    dtype: str,
+    special_codes: dict | list | None,
+    metric: str,
+    metric_special: str | numbers.Number,
+    metric_missing: str | numbers.Number,
+    metric_value: npt.NDArray | list,
+    clean_mask: npt.NDArray,
+    special_mask: npt.NDArray | None,
+    missing_mask: npt.NDArray,
+    indices: npt.NDArray | None,
+    x_transform: npt.NDArray,
+    x_clean: npt.NDArray,
+    bins: npt.NDArray | list,
+    n_bins: int,
+    n_special: int,
+    cat_unknown: str | int | numbers.Number | None
+) -> np.ndarray:
+
+    if dtype == "numerical":
+        if metric == "bins":
+            x_clean_transform = np.full(x_clean.shape, cat_unknown,
+                                        dtype=object)
+        else:
+            x_clean_transform = np.full(x_clean.shape, cat_unknown)
+
+        for i in range(n_bins):
+            mask = (indices == i)
+            x_clean_transform[mask] = metric_value[i]
+
+        x_transform[clean_mask] = x_clean_transform
+    else:
+        x_p = pd.Series(x)
+        for i in range(n_bins):
+            mask = x_p.isin(bins[i])
+            x_transform[mask] = metric_value[i]
+
+    if special_codes:
+        if isinstance(special_codes, dict):
+            xt = pd.Series(x)
+            for i, (k, s) in enumerate(special_codes.items()):
+                sl = s if isinstance(s, (list, np.ndarray)) else [s]
+                mask = xt.isin(sl).values
+                if (metric_special == "empirical" or (metric == "indices" and
+                    not isinstance(metric_special, int)) or
+                        metric == "bins"):
+                    x_transform[mask] = metric_value[n_bins + i]
+                else:
+                    x_transform[mask] = metric_special
+        else:
+            if (metric_special == "empirical" or
+                (metric == "indices" and
+                    not isinstance(metric_special, int)) or
+                    metric == "bins"):
+                x_transform[special_mask] = metric_value[n_bins]
+            else:
+                x_transform[special_mask] = metric_special
+
+    if (metric_missing == "empirical" or
+        (metric == "indices" and not isinstance(metric_missing, int)) or
+            metric == "bins"):
+        x_transform[missing_mask] = metric_value[n_bins + n_special]
+    else:
+        x_transform[missing_mask] = metric_missing
+
+    return x_transform
+
+
+def transform_binary_target(
+    splits: npt.NDArray | list,
+    dtype: str,
+    x: npt.NDArray | list,
+    n_nonevent: npt.NDArray,
+    n_event: npt.NDArray,
+    special_codes: dict | list | None,
+    categories: list | None,
+    cat_others: str | None,
+    cat_unknown: str | int | numbers.Number | None,
+    metric: str,
+    metric_special: str | numbers.Number,
+    metric_missing: str | numbers.Number,
+    user_splits: dict | None,
+    show_digits: int | None,
+    check_input: bool = False
+) -> np.ndarray:
+
+    if metric not in ("event_rate", "woe", "indices", "bins"):
+        raise ValueError('Invalid value for metric. Allowed string '
+                         'values are "event_rate", "woe", "indices" and '
+                         '"bins".')
+
+    _check_cat_unknown(metric, cat_unknown)
+    _check_metric_special_missing(metric_special, metric_missing)
+    _check_show_digits(show_digits)
+
+    if check_input:
+        x = check_array(x, ensure_2d=False, dtype=None,
+                        ensure_all_finite='allow-nan')
+
+    x = np.asarray(x)
+
+    special_mask, missing_mask, clean_mask, n_special = _mask_special_missing(
+        x, special_codes)
+
+    x_clean = x[clean_mask]
+
+    if dtype == "numerical":
+        if len(splits):
+            indices = np.digitize(x_clean, splits, right=False)
+        else:
+            indices = np.zeros(x_clean.shape)
+
+        bins = np.concatenate([[-np.inf], splits, [np.inf]])
+        bins_str = bin_str_format(bins, show_digits)
+        n_bins = len(splits) + 1
+    else:
+        indices = None
+        bins = bin_categorical(splits, categories, cat_others, user_splits)
+        bins_str = [str(b) for b in bins]
+        n_bins = len(bins)
+
+    if metric in ("woe", "event_rate"):
+        # Compute event rate and WoE
+        n_records = n_event + n_nonevent
+        t_n_nonevent = n_nonevent.sum()
+        t_n_event = n_event.sum()
+
+        if "empirical" not in (metric_special, metric_missing):
+            n_event = n_event[:n_bins]
+            n_nonevent = n_nonevent[:n_bins]
+            n_records = n_records[:n_bins]
+
+        # Default woe and event rate is 0
+        mask = (n_event > 0) & (n_nonevent > 0)
+        event_rate = np.zeros(len(n_records))
+        woe = np.zeros(len(n_records))
+
+        event_rate[mask] = n_event[mask] / n_records[mask]
+        woe[mask] = transform_event_rate_to_woe(
+            event_rate[mask], t_n_nonevent, t_n_event)
+
+        # Assign unknown category value
+        if cat_unknown is None:
+            mean_event_rate = t_n_event / n_records.sum()
+            if metric == "woe":
+                cat_unknown = transform_event_rate_to_woe(
+                    mean_event_rate, t_n_nonevent, t_n_event)
+            else:
+                cat_unknown = mean_event_rate
+
+        # Assign normal metric values
+        if metric == "woe":
+            metric_value = woe
+        else:
+            metric_value = event_rate
+
+        x_transform = np.full(x.shape, cat_unknown)
+    else:
+        # Assign corresponding indices or bin intervals
+        metric_value, x_transform = _transform_metric_indices_bins(
+            x, special_codes, metric, n_bins, n_special, bins_str, cat_unknown)
+
+    x_transform = _apply_transform(
+        x, dtype, special_codes, metric, metric_special, metric_missing,
+        metric_value, clean_mask, special_mask, missing_mask, indices,
+        x_transform, x_clean, bins, n_bins, n_special, cat_unknown)
+
+    return x_transform
+
+
+def transform_multiclass_target(
+    splits: npt.NDArray | list,
+    x: npt.NDArray | list,
+    n_event: npt.NDArray,
+    special_codes: dict | list | None,
+    metric: str,
+    metric_special: str | numbers.Number,
+    metric_missing: str | numbers.Number,
+    show_digits: int | None,
+    check_input: bool = False
+) -> np.ndarray:
+
+    if metric not in ("mean_woe", "weighted_mean_woe", "indices", "bins"):
+        raise ValueError('Invalid value for metric. Allowed string '
+                         'values are "mean_woe", "weighted_mean_woe", '
+                         '"indices" and "bins".')
+
+    _check_metric_special_missing(metric_special, metric_missing)
+    _check_show_digits(show_digits)
+
+    if check_input:
+        x = check_array(x, ensure_2d=False, dtype=None,
+                        ensure_all_finite='allow-nan')
+
+    x = np.asarray(x)
+
+    special_mask, missing_mask, clean_mask, n_special = _mask_special_missing(
+        x, special_codes)
+
+    x_clean = x[clean_mask]
+
+    if len(splits):
+        indices = np.digitize(x_clean, splits, right=False)
+    else:
+        indices = np.zeros(x_clean.shape)
+
+    bins = np.concatenate([[-np.inf], splits, [np.inf]])
+    bins_str = bin_str_format(bins, show_digits)
+    n_bins = len(splits) + 1
+
+    if metric in ("mean_woe", "weighted_mean_woe"):
+        # Build non-event to compute one-vs-all WoE
+        n_classes = n_event.shape[1]
+        n_records = np.tile(n_event.sum(axis=1), (n_classes, 1)).T
+        n_nonevent = n_records - n_event
+        t_n_nonevent = n_nonevent.sum(axis=0)
+        t_n_event = n_event.sum(axis=0)
+
+        mask = (n_event > 0) & (n_nonevent > 0)
+        event_rate = np.zeros(n_event.shape)
+        woe = np.zeros(n_event.shape)
+
+        event_rate[mask] = n_event[mask] / n_records[mask]
+
+        for i in range(n_classes):
+            woe[mask[:, i],  i] = transform_event_rate_to_woe(
+                event_rate[mask[:, i], i], t_n_nonevent[i], t_n_event[i])
+
+        if metric == "mean_woe":
+            metric_value = woe.mean(axis=1)
+        elif metric == "weighted_mean_woe":
+            metric_value = np.average(woe, weights=t_n_event, axis=1)
+
+        x_transform = np.zeros(x.shape)
+    else:
+        # Assign corresponding indices or bin intervals
+        metric_value, x_transform = _transform_metric_indices_bins(
+            x, special_codes, metric, n_bins, n_special, bins_str, None)
+
+    x_transform = _apply_transform(
+        x, "numerical", special_codes, metric, metric_special, metric_missing,
+        metric_value, clean_mask, special_mask, missing_mask, indices,
+        x_transform, x_clean, bins, n_bins, n_special, None)
+
+    return x_transform
+
+
+def transform_continuous_target(
+    splits: npt.NDArray | list,
+    dtype: str,
+    x: npt.NDArray | list,
+    n_records: npt.NDArray,
+    sums: npt.NDArray,
+    special_codes: dict | list | None,
+    categories: list | None,
+    cat_others: str | None,
+    cat_unknown: str | int | numbers.Number | None,
+    metric: str,
+    metric_special: str | numbers.Number,
+    metric_missing: str | numbers.Number,
+    user_splits: dict | None,
+    show_digits: int | None,
+    check_input: bool
+) -> np.ndarray:
+
+    if metric not in ("mean", "indices", "bins"):
+        raise ValueError('Invalid value for metric. Allowed string '
+                         'values are "mean", "indices" and "bins".')
+
+    _check_cat_unknown(metric, cat_unknown)
+    _check_metric_special_missing(metric_special, metric_missing)
+    _check_show_digits(show_digits)
+
+    if check_input:
+        x = check_array(x, ensure_2d=False, dtype=None,
+                        ensure_all_finite='allow-nan')
+
+    x = np.asarray(x)
+
+    special_mask, missing_mask, clean_mask, n_special = _mask_special_missing(
+        x, special_codes)
+
+    x_clean = x[clean_mask]
+    if dtype == "numerical":
+        if len(splits):
+            indices = np.digitize(x_clean, splits, right=False)
+        else:
+            indices = np.zeros(x_clean.shape)
+
+        bins = np.concatenate([[-np.inf], splits, [np.inf]])
+        bins_str = bin_str_format(bins, show_digits)
+        n_bins = len(splits) + 1
+    else:
+        indices = None
+        bins = bin_categorical(splits, categories, cat_others, user_splits)
+        bins_str = [str(b) for b in bins]
+        n_bins = len(bins)
+
+    if "empirical" not in (metric_special, metric_missing):
+        n_records = n_records[:n_bins]
+        sums = sums[:n_bins]
+
+    if metric == "mean":
+        # Compute mean
+        mask = n_records > 0
+        metric_value = np.zeros(len(n_records))
+        metric_value[mask] = sums[mask] / n_records[mask]
+
+        # Assign unknown category value
+        if cat_unknown is None:
+            cat_unknown = sums.sum() / n_records.sum()
+
+        x_transform = np.full(x.shape, cat_unknown)
+    else:
+        # Assign corresponding indices or bin intervals
+        metric_value, x_transform = _transform_metric_indices_bins(
+            x, special_codes, metric, n_bins, n_special, bins_str, cat_unknown)
+
+    x_transform = _apply_transform(
+        x, dtype, special_codes, metric, metric_special, metric_missing,
+        metric_value, clean_mask, special_mask, missing_mask, indices,
+        x_transform, x_clean, bins, n_bins, n_special, cat_unknown)
+
+    return x_transform
