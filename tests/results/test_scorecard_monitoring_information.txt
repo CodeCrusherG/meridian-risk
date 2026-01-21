@@ -1,0 +1,45 @@
+optbinning (Version 1.0.0)
+Copyright (c) 2019-2026 Guillermo Navas-Palencia, Apache License 2.0
+
+  Number of records A : 152
+  Number of records E : 354
+  Number of variables : 13
+  Time                : 0.0166  sec
+
+optbinning (Version 1.0.0)
+Copyright (c) 2019-2026 Guillermo Navas-Palencia, Apache License 2.0
+
+  Statistics
+    Number of records Actual             152
+    Number of records Expected           354
+    Number of scorecard variables         13
+    Target type                   continuous
+
+  Timing
+    Total time                          0.02 sec
+    System stability                    0.01 sec   ( 65.23%)
+    Variables stability                 0.01 sec   ( 33.88%)
+
+optbinning (Version 1.0.0)
+Copyright (c) 2019-2026 Guillermo Navas-Palencia, Apache License 2.0
+
+  Begin options
+    scorecard                            yes   * U
+    psi_method                          cart   * d
+    psi_n_bins                            20   * d
+    psi_min_bin_size                    0.05   * d
+    show_digits                            2   * d
+    verbose                            False   * d
+  End options
+
+  Statistics
+    Number of records Actual             152
+    Number of records Expected           354
+    Number of scorecard variables         13
+    Target type                   continuous
+
+  Timing
+    Total time                          0.02 sec
+    System stability                    0.01 sec   ( 65.23%)
+    Variables stability                 0.01 sec   ( 33.88%)
+
