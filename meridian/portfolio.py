@@ -68,3 +68,12 @@ def portfolio():
             "interest_cover": round(float(rng.uniform(1.4, 9.0)), 1),
         })
     return result
+
+
+@lru_cache
+def market_returns():
+    """756 shared observations preserve cross-product dependence in aggregation."""
+    rng = np.random.default_rng(7)
+    common = rng.standard_t(6, 756) * np.sqrt(4 / 6)
+    specific = rng.standard_normal((756, 4))
+    return (0.55 * common[:, None] + np.sqrt(1 - 0.55**2) * specific) * np.array(VOLS) / np.sqrt(252)
