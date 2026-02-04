@@ -77,3 +77,19 @@ def market_returns():
     common = rng.standard_t(6, 756) * np.sqrt(4 / 6)
     specific = rng.standard_normal((756, 4))
     return (0.55 * common[:, None] + np.sqrt(1 - 0.55**2) * specific) * np.array(VOLS) / np.sqrt(252)
+
+
+def assess(row, shock=0, pd_multiplier=1, haircut_add=0):
+    haircut = min(row["haircut"] + haircut_add, 1)
+    gross = row["gross"] + row["notional"] * row["volatility"] * shock
+    net = max(gross - row["collateral"] * (1 - haircut), 0)
+    addon = row["notional"] * row["volatility"] * (1 + shock) * norm.ppf(0.95) * np.sqrt(10 / 252)
+    pfe = net + addon
+    pd = min(row["pd"] * pd_multiplier, 1)
+    losses = -market_returns()[:, PRODUCTS.index(row["product"])] * row["notional"]
+    im = max(float(np.quantile(losses, 0.99)), 0) * np.sqrt(10) * (1 + shock)
+    return {**row, "gross": gross, "net": net, "pfe": pfe, "pd": pd,
+            "haircut": haircut, "expected_loss": net * pd * row["lgd"],
+            "initial_margin": im, "margin_due": max(im - row["margin_posted"], 0),
+            "utilization": pfe / row["limit"],
+            "status": "Breach" if pfe > row["limit"] else "Watch" if pfe > row["limit"] * 0.9 else "Within limit"}
