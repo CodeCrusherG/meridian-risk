@@ -93,3 +93,35 @@ def assess(row, shock=0, pd_multiplier=1, haircut_add=0):
             "initial_margin": im, "margin_due": max(im - row["margin_posted"], 0),
             "utilization": pfe / row["limit"],
             "status": "Breach" if pfe > row["limit"] else "Watch" if pfe > row["limit"] * 0.9 else "Within limit"}
+
+
+def snapshot(region="All regions", scenario="base", custom=None):
+    params = custom or SCENARIOS[scenario]
+    rows = [assess(r, params["shock"], params["pd_multiplier"], params["haircut_add"])
+            for r in portfolio() if region == "All regions" or r["region"] == region]
+    totals = {key: sum(r[key] for r in rows) for key in
+              ["gross", "net", "pfe", "collateral", "expected_loss", "initial_margin", "margin_due", "limit", "previous_net"]}
+    totals.update({"counterparties": len(rows), "breaches": sum(int(r["utilization"] > 1) for r in rows),
+                   "watch": sum(int(0.9 < r["utilization"] <= 1) for r in rows),
+                   "weighted_pd": sum(r["pd"] * r["net"] for r in rows) / totals["net"],
+                   "utilization": totals["pfe"] / totals["limit"],
+                   "change": totals["net"] - totals["previous_net"]})
+    groups = [{"name": name, "value": sum(r["net"] for r in rows if r["product"] == name)} for name in PRODUCTS]
+    # Illustrative history anchored to the selected scenario's computed final exposure.
+    rng = np.random.default_rng(11)
+    path = np.cumsum(rng.normal(0.0025, 0.017, 90))
+    path = np.exp(path - path[-1])
+    dates = np.arange(np.datetime64("2026-07-03"), np.datetime64("2026-10-01"))
+    history = [{"date": str(day), "net": totals["net"] * float(factor),
+                "pfe": totals["pfe"] * float(factor), "limit": totals["limit"]}
+               for day, factor in zip(dates, path)]
+    # Portfolio VaR uses aggregated same-day losses, not a sum of individual quantiles.
+    weights = np.array([sum(r["notional"] for r in rows if r["product"] == p) for p in PRODUCTS])
+    losses = -market_returns() @ weights * (1 + params["shock"])
+    var = float(np.quantile(losses, 0.99))
+    es = float(losses[losses >= var].mean())
+    return {"as_of": AS_OF, "currency": "USD", "unit": "millions", "synthetic": True,
+            "scenario": params["label"], "region": region, "totals": totals,
+            "counterparties": sorted(rows, key=lambda r: r["utilization"], reverse=True),
+            "concentration": groups, "history": history,
+            "market_risk": {"var_99": var, "expected_shortfall_99": es, "observations": len(losses), "horizon_days": 1}}
